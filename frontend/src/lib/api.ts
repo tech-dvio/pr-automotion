@@ -19,7 +19,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (res.status === 204) return undefined as T
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail || 'Request failed')
+    const detail = err.detail
+    const msg = Array.isArray(detail)
+      ? detail.map((e: { msg?: string; loc?: string[] }) => e.msg ?? JSON.stringify(e)).join('; ')
+      : detail || 'Request failed'
+    throw new Error(msg)
   }
   return res.json()
 }

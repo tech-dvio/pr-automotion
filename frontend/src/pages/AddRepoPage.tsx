@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, forwardRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useForm, useFieldArray, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -54,17 +54,18 @@ function FieldError({ message }: { message?: string }) {
   return message ? <p className="text-xs text-red-500 mt-1">{message}</p> : null
 }
 
-function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
+const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  ({ className, ...props }, ref) => (
     <input
+      ref={ref}
       className={cn(
         'w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition',
         className,
       )}
       {...props}
     />
-  )
-}
+  ),
+)
 
 function generateSecret() {
   const arr = new Uint8Array(32)
