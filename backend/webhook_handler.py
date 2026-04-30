@@ -40,12 +40,11 @@ def _run_review_thread(repo_full_name: str, pr_number: int, pr_title: str, autho
         review_cfg = build_review_config(row)
         email_cfg = build_email_config(row, db)
 
-        # Import here to get fresh env vars
         from pr_agent import review_pr, GitHubClient
-        from outlook_notifier import OutlookNotifier
+        from smtp_notifier import SmtpNotifier
 
         gh = GitHubClient(github_token)
-        notifier = OutlookNotifier(email_cfg) if email_cfg.enabled else None
+        notifier = SmtpNotifier(email_cfg) if email_cfg.enabled else None
 
         verdict = None
         score = None

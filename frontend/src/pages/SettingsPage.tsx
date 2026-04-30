@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { Eye, EyeOff, Save, Loader2, CheckCircle2 } from 'lucide-react'
 import { api } from '@/lib/api'
-import { cn } from '@/lib/utils'
 
 interface FieldConfig {
   key: string
@@ -16,44 +15,51 @@ const FIELDS: FieldConfig[] = [
   {
     key: 'webhook_base_url',
     label: 'Webhook Base URL',
-    placeholder: 'https://your-app.fly.dev',
+    placeholder: 'https://pr-automotion-production.up.railway.app',
     sensitive: false,
-    help: 'The public URL of this server. GitHub will send PR events to {this URL}/webhook',
+    help: 'The public URL of this server. GitHub sends PR events to {this URL}/webhook',
   },
   {
     key: 'anthropic_api_key',
     label: 'Anthropic API Key',
     placeholder: 'sk-ant-…',
     sensitive: true,
-    help: 'Used by the Claude AI agent to review PRs. Can be overridden per-repo.',
+    help: 'Used by the Claude AI agent to review PRs. Get it from console.anthropic.com',
   },
   {
-    key: 'azure_tenant_id',
-    label: 'Azure Tenant ID',
-    placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+    key: 'smtp_host',
+    label: 'SMTP Host',
+    placeholder: 'smtp.office365.com',
     sensitive: false,
-    help: 'Microsoft 365 / Azure AD tenant ID for Outlook email notifications',
+    help: 'Office 365: smtp.office365.com  |  Gmail: smtp.gmail.com  |  Port 587 (TLS) or 465 (SSL)',
   },
   {
-    key: 'azure_client_id',
-    label: 'Azure Client ID',
-    placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+    key: 'smtp_port',
+    label: 'SMTP Port',
+    placeholder: '587',
     sensitive: false,
-    help: 'App registration client ID with Mail.Send permission',
+    help: '587 for STARTTLS (recommended) or 465 for SSL',
   },
   {
-    key: 'azure_client_secret',
-    label: 'Azure Client Secret',
-    placeholder: 'Enter new secret…',
+    key: 'smtp_username',
+    label: 'SMTP Username',
+    placeholder: 'pr-review-bot@yourcompany.com',
+    sensitive: false,
+    help: 'The email account used to log in to the SMTP server (usually the sender email)',
+  },
+  {
+    key: 'smtp_password',
+    label: 'SMTP Password',
+    placeholder: 'Enter email password or app password…',
     sensitive: true,
-    help: 'Client secret for the Azure app registration',
+    help: 'For Office 365 with MFA: generate an App Password in your account security settings',
   },
   {
-    key: 'outlook_sender_email',
-    label: 'Outlook Sender Email',
-    placeholder: 'prreviewer@yourcompany.com',
+    key: 'smtp_sender_email',
+    label: 'Sender Email (From)',
+    placeholder: 'pr-review-bot@yourcompany.com',
     sensitive: false,
-    help: 'The licensed Microsoft 365 mailbox that sends review notification emails',
+    help: 'The email address that appears in the From field of review notification emails',
   },
 ]
 
@@ -132,6 +138,15 @@ export default function SettingsPage() {
     mutation.mutate(toSave)
   }
 
+  function field(key: string) {
+    return {
+      config: FIELDS.find(f => f.key === key)!,
+      currentValue: current?.[key] ?? '',
+      value: values[key] ?? '',
+      onChange: (v: string) => setValues(p => ({ ...p, [key]: v })),
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -148,51 +163,52 @@ export default function SettingsPage() {
       </div>
 
       <form onSubmit={handleSave} className="space-y-5">
-        {/* Webhook URL */}
+        {/* Server */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm px-6 py-5 space-y-4">
-          <h3 className="font-semibold text-slate-700 text-sm">Server Configuration</h3>
-          <SettingField
-            config={FIELDS[0]}
-            currentValue={current?.webhook_base_url ?? ''}
-            value={values.webhook_base_url ?? ''}
-            onChange={v => setValues(p => ({ ...p, webhook_base_url: v }))}
-          />
+          <h3 className="font-semibold text-slate-700 text-sm">Server</h3>
+          <SettingField {...field('webhook_base_url')} />
         </div>
 
         {/* Anthropic */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm px-6 py-5 space-y-4">
-          <h3 className="font-semibold text-slate-700 text-sm">Anthropic / Claude</h3>
-          <SettingField
-            config={FIELDS[1]}
-            currentValue={current?.anthropic_api_key ?? ''}
-            value={values.anthropic_api_key ?? ''}
-            onChange={v => setValues(p => ({ ...p, anthropic_api_key: v }))}
-          />
+          <h3 className="font-semibold text-slate-700 text-sm">Anthropic / Claude AI</h3>
+          <SettingField {...field('anthropic_api_key')} />
         </div>
 
-        {/* Email / Outlook */}
+        {/* SMTP Email */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm px-6 py-5 space-y-4">
-          <h3 className="font-semibold text-slate-700 text-sm">Outlook / Microsoft 365 Email</h3>
-          <p className="text-xs text-slate-400 -mt-2">
-            Set up Azure app registration with Mail.Send permission.{' '}
-            <a
-              href="https://learn.microsoft.com/en-us/graph/auth-register-app-v2"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-indigo-500 hover:underline"
-            >
-              Instructions →
-            </a>
-          </p>
-          {FIELDS.slice(2).map(f => (
-            <SettingField
-              key={f.key}
-              config={f}
-              currentValue={current?.[f.key] ?? ''}
-              value={values[f.key] ?? ''}
-              onChange={v => setValues(p => ({ ...p, [f.key]: v }))}
-            />
-          ))}
+          <div>
+            <h3 className="font-semibold text-slate-700 text-sm">Email (SMTP)</h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Use your company SMTP credentials. For Office 365 with MFA enabled, generate an
+              <a href="https://support.microsoft.com/en-us/account-billing/manage-app-passwords-for-two-step-verification-d6dc8c6d-4bf7-4851-ad95-6d07799387e9"
+                target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline ml-1">
+                App Password →
+              </a>
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2 sm:col-span-1">
+              <SettingField {...field('smtp_host')} />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <SettingField {...field('smtp_port')} />
+            </div>
+          </div>
+          <SettingField {...field('smtp_username')} />
+          <SettingField {...field('smtp_password')} />
+          <SettingField {...field('smtp_sender_email')} />
+
+          {/* Quick fill hints */}
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+            <p className="text-xs font-medium text-slate-600 mb-2">Common SMTP settings:</p>
+            <div className="space-y-1 text-xs text-slate-500 font-mono">
+              <p>Office 365 → smtp.office365.com : 587</p>
+              <p>Gmail → smtp.gmail.com : 587</p>
+              <p>Outlook.com → smtp-mail.outlook.com : 587</p>
+            </div>
+          </div>
         </div>
 
         {/* Save */}
@@ -201,6 +217,9 @@ export default function SettingsPage() {
             <span className="flex items-center gap-1.5 text-sm text-emerald-600">
               <CheckCircle2 className="w-4 h-4" /> Saved
             </span>
+          )}
+          {mutation.isError && (
+            <span className="text-sm text-red-500">{(mutation.error as Error)?.message}</span>
           )}
           <button
             type="submit"

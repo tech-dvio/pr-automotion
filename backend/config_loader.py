@@ -2,15 +2,12 @@ import json
 import sys
 import os
 
-# Allow importing from the backend directory
 sys.path.insert(0, os.path.dirname(__file__))
 
 from database import Repo, EmailRecipient, GlobalSetting
 from encryption import decrypt
-
-# Import the dataclasses from agent files
 from pr_agent import ReviewConfig
-from outlook_notifier import EmailConfig
+from smtp_notifier import EmailConfig, SmtpNotifier
 
 
 def _get_global(db, key: str) -> str:
@@ -39,12 +36,16 @@ def build_email_config(row: Repo, db) -> EmailConfig:
     def by_role(role: str):
         return [r.email for r in recipients if r.role == role]
 
+    smtp_port_raw = _get_global(db, "smtp_port")
+    smtp_port = int(smtp_port_raw) if smtp_port_raw.isdigit() else 587
+
     return EmailConfig(
         enabled=True,
-        tenant_id=_get_global(db, "azure_tenant_id"),
-        client_id=_get_global(db, "azure_client_id"),
-        client_secret=_get_global(db, "azure_client_secret"),
-        sender_email=_get_global(db, "outlook_sender_email"),
+        smtp_host=_get_global(db, "smtp_host"),
+        smtp_port=smtp_port,
+        smtp_username=_get_global(db, "smtp_username"),
+        smtp_password=_get_global(db, "smtp_password"),
+        sender_email=_get_global(db, "smtp_sender_email"),
         notify_on_critical=by_role("critical"),
         notify_on_high=by_role("high"),
         notify_on_block=by_role("block"),
@@ -52,3 +53,7 @@ def build_email_config(row: Repo, db) -> EmailConfig:
         notify_on_approve=by_role("approve"),
         daily_digest_to=by_role("digest"),
     )
+
+
+def build_notifier(row: Repo, db) -> SmtpNotifier:
+    return SmtpNotifier(build_email_config(row, db))
