@@ -91,12 +91,13 @@ def test_email(body: TestEmailRequest, db: Session = Depends(get_db), _=Depends(
 
     port = int(port_raw) if port_raw.isdigit() else 587
 
-    # Fast TCP reachability check (3s) before attempting full SMTP handshake
+    # Fast TCP reachability check before attempting full SMTP handshake
     try:
-        sock = socket.create_connection((host, port), timeout=5)
+        sock = socket.create_connection((host, port), timeout=10)
         sock.close()
     except socket.timeout:
-        return {"ok": False, "error": f"Cannot reach {host}:{port} — connection timed out. Check smtp_host and smtp_port are correct."}
+        hint = " For AWS SES try port 2587 instead of 587." if "amazonaws" in host else ""
+        return {"ok": False, "error": f"Cannot reach {host}:{port} — connection timed out. Check smtp_host and smtp_port are correct.{hint}"}
     except OSError as e:
         return {"ok": False, "error": f"Cannot reach {host}:{port} — {e}. Check smtp_host and smtp_port."}
 

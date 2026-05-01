@@ -183,15 +183,17 @@ class SmtpNotifier:
             msg.attach(MIMEText(html, "html", "utf-8"))
 
             ctx = ssl.create_default_context()
-            if self.config.smtp_port == 465:
-                with smtplib.SMTP_SSL(self.config.smtp_host, 465, context=ctx, timeout=30) as server:
+            ssl_ports = {465, 2465}
+            if self.config.smtp_port in ssl_ports:
+                with smtplib.SMTP_SSL(self.config.smtp_host, self.config.smtp_port, context=ctx, timeout=30) as server:
                     server.login(self.config.smtp_username, self.config.smtp_password)
                     server.sendmail(msg["From"], to_emails, msg.as_string())
             else:
+                # STARTTLS — works on ports 587, 2587 (AWS SES alt), 25, etc.
                 with smtplib.SMTP(self.config.smtp_host, self.config.smtp_port, timeout=30) as server:
                     server.ehlo()
                     server.starttls(context=ctx)
-                    server.ehlo()  # re-identify after TLS (required by Office 365)
+                    server.ehlo()
                     server.login(self.config.smtp_username, self.config.smtp_password)
                     server.sendmail(msg["From"], to_emails, msg.as_string())
 
