@@ -13,6 +13,7 @@ export default function LogsPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['logs', page, verdict],
     queryFn: () => api.logs.list({ page, per_page: PER_PAGE, verdict: verdict || undefined }),
+    refetchInterval: 15_000,
   })
 
   const totalPages = data ? Math.ceil(data.total / PER_PAGE) : 1

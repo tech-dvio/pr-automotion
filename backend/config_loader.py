@@ -39,11 +39,14 @@ def build_email_config(row: Repo, db) -> EmailConfig:
     smtp_port_raw = _get_global(db, "smtp_port")
     smtp_port = int(smtp_port_raw) if smtp_port_raw.isdigit() else 587
 
+    smtp_host = _get_global(db, "smtp_host")
+    smtp_username = _get_global(db, "smtp_username")
+
     return EmailConfig(
-        enabled=True,
-        smtp_host=_get_global(db, "smtp_host"),
+        enabled=bool(smtp_host and smtp_username),
+        smtp_host=smtp_host,
         smtp_port=smtp_port,
-        smtp_username=_get_global(db, "smtp_username"),
+        smtp_username=smtp_username,
         smtp_password=_get_global(db, "smtp_password"),
         sender_email=_get_global(db, "smtp_sender_email"),
         notify_on_critical=by_role("critical"),

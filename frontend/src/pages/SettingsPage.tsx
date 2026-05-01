@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { Eye, EyeOff, Save, Loader2, CheckCircle2 } from 'lucide-react'
+import { Eye, EyeOff, Save, Loader2, CheckCircle2, Send } from 'lucide-react'
 import { api } from '@/lib/api'
 
 interface FieldConfig {
@@ -106,6 +106,8 @@ function SettingField({
 export default function SettingsPage() {
   const [values, setValues] = useState<Record<string, string>>({})
   const [saved, setSaved] = useState(false)
+  const [testEmailTo, setTestEmailTo] = useState('')
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null)
 
   const { data: current, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -208,6 +210,37 @@ export default function SettingsPage() {
               <p>Gmail → smtp.gmail.com : 587</p>
               <p>Outlook.com → smtp-mail.outlook.com : 587</p>
             </div>
+          </div>
+
+          {/* Test email */}
+          <div className="border-t border-slate-100 pt-4">
+            <p className="text-xs font-medium text-slate-600 mb-2">Test email delivery</p>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                placeholder="send test to…"
+                value={testEmailTo}
+                onChange={e => { setTestEmailTo(e.target.value); setTestResult(null) }}
+                className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <button
+                type="button"
+                disabled={!testEmailTo}
+                onClick={async () => {
+                  setTestResult(null)
+                  const r = await api.settings.testEmail(testEmailTo)
+                  setTestResult(r)
+                }}
+                className="flex items-center gap-1.5 text-sm border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition whitespace-nowrap"
+              >
+                <Send className="w-3.5 h-3.5" /> Send Test
+              </button>
+            </div>
+            {testResult && (
+              <p className={`text-xs mt-1.5 ${testResult.ok ? 'text-emerald-600' : 'text-red-500'}`}>
+                {testResult.ok ? '✓ Test email sent successfully' : `✗ ${testResult.error}`}
+              </p>
+            )}
           </div>
         </div>
 

@@ -66,6 +66,7 @@ export const api = {
   settings: {
     get: () => request<Record<string, string>>('GET', '/api/settings'),
     update: (data: Record<string, string>) => request<{ ok: boolean }>('PUT', '/api/settings', data),
+    testEmail: (to: string) => request<{ ok: boolean; error?: string }>('POST', '/api/settings/test-email', { to }),
   },
 }
 

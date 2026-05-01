@@ -28,7 +28,7 @@ import requests
 from dotenv import load_dotenv
 
 from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
-from outlook_notifier import EmailConfig
+from smtp_notifier import EmailConfig, SmtpNotifier
 
 load_dotenv()
 
@@ -449,46 +449,31 @@ async def format_review_comment(context: dict, review: dict) -> dict:
     print(f"  STEP 3: Formatting Review Comments")
     print(f"{'='*60}")
 
+    verdict = review.get("verdict", "request_changes")
+    score = review.get("overall_score", 0)
+    issues = review.get("issues", [])
+
     prompt = f"""
-Format this code review for posting on GitHub PR #{context['pr_number']}.
+Write a concise GitHub PR review comment for PR #{context['pr_number']} ("{context['title']}") by @{context['author']}.
 
-Review data:
-{json.dumps(review, indent=2)}
+Verdict: {verdict} | Score: {score}/100
+Issues: {json.dumps([{{"severity": i.get("severity"), "file": i.get("file"), "line": i.get("line"), "title": i.get("title"), "suggestion": i.get("suggestion")}} for i in issues], indent=2)}
+Blockers: {json.dumps(review.get("approval_blockers", []))}
+Positives: {json.dumps(review.get("positives", []))}
+Summary: {review.get("summary", "")}
 
-PR title: "{context['title']}"
-PR author: @{context['author']}
-
-Create two outputs:
-
-1. OVERALL_COMMENT: A beautiful GitHub Markdown PR review comment that includes:
-   - Header with verdict emoji (✅ Approved | ⚠️ Changes Requested | 🚫 Blocked)
-   - Overall score badge: "Score: {review.get('overall_score', 0)}/100"
-   - Summary paragraph
-   - Issues table (Severity | File | Issue | Category)
-   - Positives section ("What's done well ✨")
-   - Blockers section if any (bold, numbered)
-   - Nice-to-have suggestions
-   - Closing note (encouraging, professional)
-
-2. INLINE_COMMENTS: Array of GitHub inline review comments.
-   Each must have:
-   - path: the file path (exactly as in the diff)
-   - line: the line number in the NEW file (right side of diff)
-   - body: markdown comment text (concise, specific, actionable)
+Rules:
+- overall_comment must be SHORT — max 300 words, use bullet points not prose
+- Header: verdict emoji + score badge only
+- List only top 5 issues max (prioritise critical/high)
+- For inline comments: only comment on lines that exist in the diff; keep body under 2 sentences
 
 Return ONLY this JSON:
 {{
-  "overall_comment": "Full markdown string for the PR comment",
-  "inline_comments": [
-    {{
-      "path": "src/auth.py",
-      "line": 42,
-      "body": "🔴 **Security**: Hardcoded API key detected. Move to environment variables:\\n```python\\napi_key = os.getenv('API_KEY')\\n```"
-    }}
-  ]
+  "overall_comment": "short markdown comment",
+  "inline_comments": [{{"path": "file.py", "line": 42, "body": "short comment"}}]
 }}
-
-Severity emoji guide: 🔴 critical, 🟠 high, 🟡 medium, 🔵 low, ℹ️ info
+Severity emoji: 🔴 critical 🟠 high 🟡 medium 🔵 low
 """
 
     result = await _run_agent(prompt, max_turns=3)
@@ -770,7 +755,6 @@ if __name__ == "__main__":
         custom_rules=args.rules or [],
     )
 
-    # Build email config from CLI args (or from .env if no args given)
     email_config = EmailConfig(
         enabled            = not args.no_email,
         notify_on_critical = args.email_critical or [],
@@ -779,5 +763,6 @@ if __name__ == "__main__":
         notify_on_merge    = args.email_merge    or [],
         notify_on_approve  = args.email_approve  or [],
     )
-
-    asyncio.run(review_pr(args.repo, args.pr, review_config, email_config, dry_run=args.dry_run))
+    gh = GitHubClient(GITHUB_TOKEN)
+    notifier = SmtpNotifier(email_config) if email_config.enabled else None
+    asyncio.run(review_pr(review_config, args.pr, gh, notifier=notifier, dry_run=args.dry_run))
