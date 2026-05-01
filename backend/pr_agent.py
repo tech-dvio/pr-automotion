@@ -22,14 +22,13 @@ import re
 import argparse
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
 from dataclasses import dataclass, field
 
 import requests
 from dotenv import load_dotenv
 
 from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
-from outlook_notifier import OutlookNotifier, EmailConfig
+from outlook_notifier import EmailConfig
 
 load_dotenv()
 
@@ -431,8 +430,6 @@ async def format_review_comment(context: dict, review: dict) -> dict:
     print(f"  STEP 3: Formatting Review Comments")
     print(f"{'='*60}")
 
-    issues = review.get("issues", [])
-
     prompt = f"""
 Format this code review for posting on GitHub PR #{context['pr_number']}.
 
@@ -643,22 +640,22 @@ def _extract_json(text: str):
 # ── Main Pipeline ─────────────────────────────────────────────────────────────
 
 async def review_pr(
-    repo: str,
-    pr_number: int,
     config: ReviewConfig,
-    email_config: Optional[EmailConfig] = None,
+    pr_number: int,
+    gh: GitHubClient,
+    notifier=None,
     dry_run: bool = False
 ):
     """Full PR review pipeline."""
-    start  = datetime.now()
-    gh     = GitHubClient(GITHUB_TOKEN)
+    repo  = config.repo
+    start = datetime.now()
 
     print(f"\n{'#'*60}")
     print(f"  PR REVIEW AGENT")
     print(f"  Repo      : {repo}")
     print(f"  PR        : #{pr_number}")
     print(f"  Auto-merge: {config.auto_merge}")
-    print(f"  Email     : {'enabled' if email_config and email_config.enabled else 'disabled'}")
+    print(f"  Email     : {'enabled' if notifier else 'disabled'}")
     print(f"  Dry run   : {dry_run}")
     print(f"  Started   : {start.strftime('%H:%M:%S')}")
     print(f"{'#'*60}")
@@ -667,32 +664,33 @@ async def review_pr(
     review    = await run_code_review(context)
     formatted = await format_review_comment(context, review)
     result    = post_review_to_github(gh, repo, pr_number, context, review, formatted, config, dry_run)
-    json_path, md_path = save_review_report(context, review, formatted, result)
 
-    # ── Step 6: Outlook Email Notifications ───────────────────────────────────
-    if email_config and email_config.enabled and not dry_run:
+    try:
+        save_review_report(context, review, formatted, result)
+    except Exception as e:
+        print(f"  ⚠ Could not save report file: {e}")
+
+    # ── Step 6: Email Notifications ───────────────────────────────────────────
+    if notifier and not dry_run:
         print(f"\n{'='*60}")
-        print(f"  STEP 6: Sending Outlook Email Notifications")
+        print(f"  STEP 6: Sending Email Notifications")
         print(f"{'='*60}")
-        notifier = OutlookNotifier(email_config)
 
-        # Send review notification (handles critical / high / block / approve logic)
         notifier.notify_review_complete(
-            repo       = repo,
-            pr_number  = pr_number,
-            pr_title   = context["title"],
-            author     = context["author"],
-            review     = review,
+            repo      = repo,
+            pr_number = pr_number,
+            pr_title  = context["title"],
+            author    = context["author"],
+            review    = review,
         )
 
-        # If the PR was auto-merged, send a separate merge confirmation email
         if result.get("merged"):
             notifier.notify_merge(
-                repo       = repo,
-                pr_number  = pr_number,
-                pr_title   = context["title"],
-                author     = context["author"],
-                strategy   = config.auto_merge_strategy,
+                repo      = repo,
+                pr_number = pr_number,
+                pr_title  = context["title"],
+                author    = context["author"],
+                strategy  = config.auto_merge_strategy,
             )
 
     elapsed = (datetime.now() - start).seconds
@@ -701,10 +699,13 @@ async def review_pr(
     print(f"  Verdict   : {review.get('verdict', '?').upper()}")
     print(f"  Score     : {review.get('overall_score', 0)}/100")
     print(f"  Merged    : {result.get('merged', False)}")
-    print(f"  Report    : {md_path}")
     print(f"{'#'*60}\n")
 
-    return {"review": review, "result": result, "report": md_path}
+    # Return flat dict that webhook_handler expects
+    flat = {**review}
+    flat["score"] = review.get("overall_score", review.get("score", 0))
+    flat["merged"] = result.get("merged", False)
+    return flat
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
