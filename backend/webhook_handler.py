@@ -70,26 +70,52 @@ def _run_review_thread(repo_full_name: str, pr_number: int, pr_title: str, autho
                 high_count = sum(1 for i in issues if i.get("severity") == "high")
                 merged = result.get("merged", False)
                 review_json_str = json.dumps(result)
-        except Exception as e:
-            print(f"[webhook] Review failed for {repo_full_name}#{pr_number}: {e}")
 
-        log = ReviewLog(
-            repo_id=row.id,
-            repo_full_name=repo_full_name,
-            pr_number=pr_number,
-            pr_title=pr_title,
-            author=author,
-            verdict=verdict,
-            score=score,
-            issues_count=issues_count,
-            critical_count=critical_count,
-            high_count=high_count,
-            merged=merged,
-            reviewed_at=datetime.utcnow(),
-            review_json=review_json_str,
-        )
-        db.add(log)
-        db.commit()
+                # Auto-close PR when critical security issues are found
+                if critical_count > 0 and not merged:
+                    critical_msgs = [
+                        f"- {i.get('message', '')}" for i in issues
+                        if i.get("severity") == "critical"
+                    ]
+                    close_reason = (
+                        "## 🚨 PR Closed — Critical Security Issues Detected\n\n"
+                        "This PR has been automatically closed because the AI reviewer found "
+                        f"**{critical_count} critical issue(s)** that must be resolved before merging:\n\n"
+                        + "\n".join(critical_msgs)
+                        + "\n\nPlease fix these issues and open a new PR."
+                    )
+                    try:
+                        gh.close_pr(repo_full_name, pr_number, reason=close_reason)
+                        print(f"[webhook] 🚨 PR #{pr_number} closed — {critical_count} critical issue(s)")
+                    except Exception as ce:
+                        print(f"[webhook] Could not close PR #{pr_number}: {ce}")
+
+        except Exception as e:
+            import traceback
+            print(f"[webhook] Review failed for {repo_full_name}#{pr_number}: {e}")
+            traceback.print_exc()
+
+        try:
+            log = ReviewLog(
+                repo_id=row.id,
+                repo_full_name=repo_full_name,
+                pr_number=pr_number,
+                pr_title=pr_title,
+                author=author,
+                verdict=verdict,
+                score=score,
+                issues_count=issues_count,
+                critical_count=critical_count,
+                high_count=high_count,
+                merged=merged,
+                reviewed_at=datetime.utcnow(),
+                review_json=review_json_str,
+            )
+            db.add(log)
+            db.commit()
+            print(f"[webhook] Log saved for {repo_full_name}#{pr_number} verdict={verdict}")
+        except Exception as db_err:
+            print(f"[webhook] Failed to save log: {db_err}")
 
     except Exception as e:
         print(f"[webhook] Thread error for {repo_full_name}: {e}")

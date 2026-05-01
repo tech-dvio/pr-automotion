@@ -165,6 +165,25 @@ class GitHubClient:
             }
         )
 
+    def close_pr(self, repo: str, pr_number: int, reason: str = "") -> dict:
+        """Close (not merge) a PR."""
+        if reason:
+            try:
+                self.post(
+                    f"{GITHUB_API}/repos/{repo}/issues/{pr_number}/comments",
+                    payload={"body": reason},
+                )
+            except Exception:
+                pass
+        resp = requests.patch(
+            f"{GITHUB_API}/repos/{repo}/pulls/{pr_number}",
+            headers=self.headers,
+            json={"state": "closed"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def list_open_prs(self, repo: str) -> list:
         """List all open PRs in a repo."""
         return self.get(

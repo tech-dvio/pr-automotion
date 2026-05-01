@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 from sqlalchemy import (
-    create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Text
+    create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Text, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
@@ -71,9 +71,28 @@ class ReviewLog(Base):
     review_json = Column(Text, nullable=True)
 
 
+def _migrate_db():
+    """Add columns that may be missing from older DB instances (SQLite doesn't support ALTER easily)."""
+    migrations = [
+        "ALTER TABLE review_log ADD COLUMN critical_count INTEGER DEFAULT 0",
+        "ALTER TABLE review_log ADD COLUMN high_count INTEGER DEFAULT 0",
+        "ALTER TABLE review_log ADD COLUMN merged BOOLEAN DEFAULT 0",
+        "ALTER TABLE review_log ADD COLUMN author TEXT",
+        "ALTER TABLE review_log ADD COLUMN pr_title TEXT",
+    ]
+    with engine.connect() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+            except Exception:
+                pass  # column already exists
+
+
 def init_db():
     os.makedirs("data", exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    _migrate_db()
 
 
 def get_db():

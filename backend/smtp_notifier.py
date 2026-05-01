@@ -200,6 +200,24 @@ class SmtpNotifier:
             print(f"[smtp] ✗ Failed to send email: {e}")
             return False
 
+    def _all_recipients(self) -> list[str]:
+        """Return every configured email address deduplicated."""
+        seen: set[str] = set()
+        result = []
+        for lst in [
+            self.config.notify_on_critical,
+            self.config.notify_on_high,
+            self.config.notify_on_block,
+            self.config.notify_on_approve,
+            self.config.notify_on_merge,
+            self.config.daily_digest_to,
+        ]:
+            for email in lst:
+                if email not in seen:
+                    seen.add(email)
+                    result.append(email)
+        return result
+
     def notify_review_complete(
         self,
         repo: str,
@@ -215,40 +233,45 @@ class SmtpNotifier:
         issues = review.get("issues", [])
         score = review.get("overall_score", review.get("score", 100))
         sent_emails = []
+        already_sent: set[str] = set()
 
         pr_url = f"https://github.com/{repo}/pull/{pr_number}"
 
+        def _send_once(label: str, to: list[str]):
+            extra = [e for e in to if e not in already_sent]
+            if not extra:
+                return
+            subject, html = _build_review_html(repo, pr_number, pr_title, author, review, pr_url)
+            if self._send(extra, subject, html):
+                sent_emails.append((label, extra))
+                already_sent.update(extra)
+
         critical_issues = [i for i in issues if i.get("severity") == "critical"]
-        if critical_issues and self.config.notify_on_critical:
-            subject, html = _build_review_html(repo, pr_number, pr_title, author, review, pr_url)
-            if self._send(self.config.notify_on_critical, subject, html):
-                sent_emails.append(("critical_alert", self.config.notify_on_critical))
-
         high_issues = [i for i in issues if i.get("severity") == "high"]
-        if high_issues and self.config.notify_on_high:
-            extra = [e for e in self.config.notify_on_high if e not in self.config.notify_on_critical]
-            if extra:
-                subject, html = _build_review_html(repo, pr_number, pr_title, author, review, pr_url)
-                if self._send(extra, subject, html):
-                    sent_emails.append(("high_alert", extra))
 
-        if verdict in ("block", "request_changes") and self.config.notify_on_block:
-            if not critical_issues:
-                subject, html = _build_review_html(repo, pr_number, pr_title, author, review, pr_url)
-                if self._send(self.config.notify_on_block, subject, html):
-                    sent_emails.append(("block_alert", self.config.notify_on_block))
+        # Critical issues → notify critical-role recipients + ALL recipients as fallback
+        if critical_issues:
+            targets = self.config.notify_on_critical or self._all_recipients()
+            _send_once("critical_alert", targets)
 
-        if verdict == "approve" and self.config.notify_on_approve:
-            subject, html = _build_review_html(repo, pr_number, pr_title, author, review, pr_url)
-            if self._send(self.config.notify_on_approve, subject, html):
-                sent_emails.append(("approved", self.config.notify_on_approve))
+        # High-severity issues → notify high-role recipients
+        if high_issues:
+            _send_once("high_alert", self.config.notify_on_high)
 
-        if score < self.config.send_on_score_below:
-            already = {e for _, r in sent_emails for e in r}
-            extra = [e for e in (self.config.notify_on_block or self.config.notify_on_critical) if e not in already]
-            if extra:
-                subject, html = _build_review_html(repo, pr_number, pr_title, author, review, pr_url)
-                self._send(extra, subject, html)
+        # Block / request_changes → notify block-role recipients (or ALL as fallback)
+        if verdict in ("block", "request_changes"):
+            targets = self.config.notify_on_block or self._all_recipients()
+            _send_once("block_alert", targets)
+
+        # Approve → notify approve-role recipients
+        if verdict == "approve":
+            targets = self.config.notify_on_approve or self.config.notify_on_merge
+            if targets:
+                _send_once("approved", targets)
+
+        # Low score fallback — catch anything that slipped through
+        if score < self.config.send_on_score_below and not already_sent:
+            _send_once("low_score", self._all_recipients())
 
         return {"sent": len(sent_emails) > 0, "emails_sent": sent_emails}
 
