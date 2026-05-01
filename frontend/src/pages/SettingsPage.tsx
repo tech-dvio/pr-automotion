@@ -108,6 +108,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [testEmailTo, setTestEmailTo] = useState('')
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null)
+  const [testingEmail, setTestingEmail] = useState(false)
 
   const { data: current, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -225,15 +226,23 @@ export default function SettingsPage() {
               />
               <button
                 type="button"
-                disabled={!testEmailTo}
+                disabled={!testEmailTo || testingEmail}
                 onClick={async () => {
                   setTestResult(null)
-                  const r = await api.settings.testEmail(testEmailTo)
-                  setTestResult(r)
+                  setTestingEmail(true)
+                  try {
+                    const r = await api.settings.testEmail(testEmailTo)
+                    setTestResult(r)
+                  } finally {
+                    setTestingEmail(false)
+                  }
                 }}
                 className="flex items-center gap-1.5 text-sm border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition whitespace-nowrap"
               >
-                <Send className="w-3.5 h-3.5" /> Send Test
+                {testingEmail
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Send className="w-3.5 h-3.5" />}
+                {testingEmail ? 'Sending…' : 'Send Test'}
               </button>
             </div>
             {testResult && (

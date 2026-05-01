@@ -76,6 +76,10 @@ class TestEmailRequest(BaseModel):
 
 @router.post("/test-email")
 def test_email(body: TestEmailRequest, db: Session = Depends(get_db), _=Depends(require_admin)):
+    import socket
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
     host = _read(db, "smtp_host")
     port_raw = _read(db, "smtp_port")
     username = _read(db, "smtp_username")
@@ -83,19 +87,24 @@ def test_email(body: TestEmailRequest, db: Session = Depends(get_db), _=Depends(
     sender = _read(db, "smtp_sender_email") or username
 
     if not host or not username:
-        return {"ok": False, "error": "SMTP not configured — set smtp_host and smtp_username in Settings"}
+        return {"ok": False, "error": "SMTP not configured — save smtp_host and smtp_username in Settings first, then test"}
 
     port = int(port_raw) if port_raw.isdigit() else 587
 
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text import MIMEText
+    # Fast TCP reachability check (3s) before attempting full SMTP handshake
+    try:
+        sock = socket.create_connection((host, port), timeout=5)
+        sock.close()
+    except socket.timeout:
+        return {"ok": False, "error": f"Cannot reach {host}:{port} — connection timed out. Check smtp_host and smtp_port are correct."}
+    except OSError as e:
+        return {"ok": False, "error": f"Cannot reach {host}:{port} — {e}. Check smtp_host and smtp_port."}
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = "✅ PR Review Agent — SMTP Test"
     msg["From"] = sender
     msg["To"] = body.to
-    html = """
-    <div style="font-family:sans-serif;max-width:480px;margin:40px auto;padding:24px;border:1px solid #E2E8F0;border-radius:12px">
+    html = """<div style="font-family:sans-serif;max-width:480px;margin:40px auto;padding:24px;border:1px solid #E2E8F0;border-radius:12px">
       <h2 style="color:#6366F1">PR Review Agent</h2>
       <p>Your SMTP configuration is working correctly. 🎉</p>
       <p style="color:#64748B;font-size:13px">Email notifications will be sent to this address when PRs are reviewed.</p>
@@ -105,17 +114,21 @@ def test_email(body: TestEmailRequest, db: Session = Depends(get_db), _=Depends(
     try:
         ctx = ssl.create_default_context()
         if port == 465:
-            with smtplib.SMTP_SSL(host, 465, context=ctx, timeout=15) as server:
+            with smtplib.SMTP_SSL(host, 465, context=ctx, timeout=10) as server:
                 server.login(username, password)
                 server.sendmail(sender, [body.to], msg.as_string())
         else:
-            with smtplib.SMTP(host, port, timeout=15) as server:
+            with smtplib.SMTP(host, port, timeout=10) as server:
                 server.ehlo()
                 server.starttls(context=ctx)
                 server.ehlo()
                 server.login(username, password)
                 server.sendmail(sender, [body.to], msg.as_string())
         return {"ok": True}
+    except smtplib.SMTPAuthenticationError:
+        return {"ok": False, "error": "Authentication failed — check smtp_username and smtp_password. For Office 365 with MFA use an App Password."}
+    except smtplib.SMTPException as e:
+        return {"ok": False, "error": f"SMTP error: {e}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
