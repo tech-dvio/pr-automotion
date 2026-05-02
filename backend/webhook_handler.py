@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import Request, Response
 from sqlalchemy.orm import Session
 
-from database import Repo, ReviewLog, get_db, SessionLocal
+from database import Repo, ReviewLog, SessionLocal
 from encryption import decrypt
 from config_loader import build_review_config, build_email_config
 
@@ -55,6 +55,7 @@ def _run_review_thread(repo_full_name: str, pr_number: int, pr_title: str, autho
         review_json_str = None
 
         try:
+            print(f"[webhook] Starting review for {repo_full_name}#{pr_number}")
             result = asyncio.run(review_pr(
                 config=review_cfg,
                 pr_number=pr_number,
@@ -70,11 +71,12 @@ def _run_review_thread(repo_full_name: str, pr_number: int, pr_title: str, autho
                 high_count = sum(1 for i in issues if i.get("severity") == "high")
                 merged = result.get("merged", False)
                 review_json_str = json.dumps(result)
+                print(f"[webhook] Review done: verdict={verdict} score={score} issues={issues_count} critical={critical_count}")
 
                 # Auto-close PR when critical security issues are found
                 if critical_count > 0 and not merged:
                     critical_msgs = [
-                        f"- {i.get('message', '')}" for i in issues
+                        f"- {i.get('title') or i.get('message', '')}" for i in issues
                         if i.get("severity") == "critical"
                     ]
                     close_reason = (
@@ -92,8 +94,19 @@ def _run_review_thread(repo_full_name: str, pr_number: int, pr_title: str, autho
 
         except Exception as e:
             import traceback
-            print(f"[webhook] Review failed for {repo_full_name}#{pr_number}: {e}")
+            print(f"[webhook] ✗ Review FAILED for {repo_full_name}#{pr_number}: {type(e).__name__}: {e}")
             traceback.print_exc()
+            # Post a fallback comment so the developer knows the review ran but failed
+            try:
+                gh.post_pr_comment(
+                    repo_full_name, pr_number,
+                    f"## 🤖 PR Review — Error\n\n"
+                    f"The automated review encountered an error (`{type(e).__name__}`). "
+                    f"Please check the server logs or re-open this PR to retry.\n\n"
+                    f"_Error: {str(e)[:200]}_"
+                )
+            except Exception:
+                pass
 
         try:
             log = ReviewLog(

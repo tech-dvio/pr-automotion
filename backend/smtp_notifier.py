@@ -272,9 +272,15 @@ class SmtpNotifier:
             if targets:
                 _send_once("approved", targets)
 
-        # Low score fallback — catch anything that slipped through
+        # Low score fallback
         if score < self.config.send_on_score_below and not already_sent:
             _send_once("low_score", self._all_recipients())
+
+        # Always notify — if nothing sent yet, email every configured recipient
+        if not already_sent:
+            all_recip = self._all_recipients()
+            if all_recip:
+                _send_once("review_complete", all_recip)
 
         return {"sent": len(sent_emails) > 0, "emails_sent": sent_emails}
 

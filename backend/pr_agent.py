@@ -437,53 +437,109 @@ Return ONLY this JSON:
     }
 
 
-# ── Step 3: Review Comment Formatter ─────────────────────────────────────────
+# ── Step 3: Review Comment Builder (no AI call — fast, deterministic) ─────────
 
-async def format_review_comment(context: dict, review: dict) -> dict:
-    """
-    Takes the raw review JSON and formats it into:
-    - A beautiful overall PR comment (markdown with tables, emoji)
-    - Inline comments per file/line for GitHub's review API
-    """
-    print(f"\n{'='*60}")
-    print(f"  STEP 3: Formatting Review Comments")
-    print(f"{'='*60}")
-
+def _build_pr_comment(context: dict, review: dict) -> str:
+    """Build a concise, developer-friendly PR review comment from review JSON."""
     verdict = review.get("verdict", "request_changes")
     score = review.get("overall_score", 0)
     issues = review.get("issues", [])
 
-    prompt = f"""
-Write a concise GitHub PR review comment for PR #{context['pr_number']} ("{context['title']}") by @{context['author']}.
+    VERDICT_EMOJI = {"approve": "✅", "request_changes": "⚠️", "block": "🚨"}
+    SEV_EMOJI = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
+    score_icon = "🟢" if score >= 80 else "🟡" if score >= 60 else "🔴"
+    verdict_label = verdict.replace("_", " ").title()
+    emoji = VERDICT_EMOJI.get(verdict, "📋")
 
-Verdict: {verdict} | Score: {score}/100
-Issues: {json.dumps([{{"severity": i.get("severity"), "file": i.get("file"), "line": i.get("line"), "title": i.get("title"), "suggestion": i.get("suggestion")}} for i in issues], indent=2)}
-Blockers: {json.dumps(review.get("approval_blockers", []))}
-Positives: {json.dumps(review.get("positives", []))}
-Summary: {review.get("summary", "")}
+    files_changed = context.get("files_changed", 0)
+    max_files = context.get("config", {}).get("max_file_changes", 50)
+    has_tests = context.get("has_tests", False)
+    langs = ", ".join(context.get("languages", [])) or "unknown"
 
-Rules:
-- overall_comment must be SHORT — max 300 words, use bullet points not prose
-- Header: verdict emoji + score badge only
-- List only top 5 issues max (prioritise critical/high)
-- For inline comments: only comment on lines that exist in the diff; keep body under 2 sentences
+    meta = f"{files_changed} file(s) · {langs}"
+    if not has_tests:
+        meta += " · ⚠️ no test changes"
+    if files_changed > max_files:
+        meta += f" · 🔶 large PR (>{max_files} files)"
 
-Return ONLY this JSON:
-{{
-  "overall_comment": "short markdown comment",
-  "inline_comments": [{{"path": "file.py", "line": 42, "body": "short comment"}}]
-}}
-Severity emoji: 🔴 critical 🟠 high 🟡 medium 🔵 low
-"""
+    lines = [
+        f"## {emoji} PR Review — {verdict_label} | {score_icon} {score}/100",
+        f"<sub>{meta}</sub>",
+        "",
+        f"> {review.get('summary', 'Review complete.')}",
+        "",
+    ]
 
-    result = await _run_agent(prompt, max_turns=3)
-    data = _extract_json(result)
+    critical = [i for i in issues if i.get("severity") == "critical"]
+    high     = [i for i in issues if i.get("severity") == "high"]
+    medium   = [i for i in issues if i.get("severity") == "medium"]
+    low      = [i for i in issues if i.get("severity") in ("low", "info")]
+    top      = (critical + high + medium + low)[:6]
 
-    if data:
-        print(f"  ✓ Overall comment: {len(data.get('overall_comment', ''))} chars")
-        print(f"  ✓ Inline comments: {len(data.get('inline_comments', []))}")
+    if top:
+        lines.append(f"**Issues ({len(issues)} total):**")
+        for i in top:
+            em  = SEV_EMOJI.get(i.get("severity", "info"), "⚪")
+            loc = f"`{i['file']}:{i['line']}`" if i.get("file") and i.get("line") else ""
+            title = (i.get("title") or i.get("description") or "")[:80]
+            sugg  = (i.get("suggestion") or "")[:120]
+            row = f"{em} {loc} **{title}**"
+            if sugg:
+                row += f" — _{sugg}_"
+            lines.append(row)
+        if len(issues) > 6:
+            lines.append(f"_…and {len(issues) - 6} more_")
+        lines.append("")
 
-    return data or {"overall_comment": review.get("summary", "Review complete."), "inline_comments": []}
+    blockers = review.get("approval_blockers", [])
+    if blockers:
+        lines.append("**❌ Must fix before merge:**")
+        for b in blockers[:3]:
+            lines.append(f"- {b}")
+        lines.append("")
+
+    positives = review.get("positives", [])[:2]
+    if positives:
+        lines.append("**✓ Looks good:** " + " · ".join(positives))
+        lines.append("")
+
+    lines.append("---")
+    lines.append(f"*🤖 AI Code Review · {len(critical)} critical · {len(high)} high · {len(medium)} medium*")
+    return "\n".join(lines)
+
+
+def _build_inline_comments(review: dict) -> list:
+    """Extract per-line inline comments from review issues."""
+    SEV_EMOJI = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
+    comments = []
+    for i in review.get("issues", []):
+        if not i.get("file") or not i.get("line"):
+            continue
+        try:
+            line = int(i["line"])
+            if line < 1:
+                continue
+        except (ValueError, TypeError):
+            continue
+        em    = SEV_EMOJI.get(i.get("severity", "info"), "⚪")
+        title = i.get("title") or i.get("description") or ""
+        sugg  = i.get("suggestion") or ""
+        body  = f"{em} **{title}**"
+        if sugg:
+            body += f"\n\n**Suggestion:** {sugg[:300]}"
+        comments.append({"path": i["file"], "line": line, "body": body})
+    return comments[:10]
+
+
+def format_review_comment(context: dict, review: dict) -> dict:
+    """Kept for CLI backward-compat. Returns same shape as before."""
+    print(f"\n{'='*60}")
+    print(f"  STEP 3: Formatting Review Comments")
+    print(f"{'='*60}")
+    overall = _build_pr_comment(context, review)
+    inline  = _build_inline_comments(review)
+    print(f"  ✓ Overall comment: {len(overall)} chars | {len(inline)} inline comments")
+    return {"overall_comment": overall, "inline_comments": inline}
 
 
 # ── Step 4: Post to GitHub & Decide ──────────────────────────────────────────
@@ -539,23 +595,38 @@ def post_review_to_github(
     # Filter inline comments to valid ones (GitHub requires line to exist in diff)
     valid_inline = [c for c in inline_comments if c.get("path") and c.get("line") and c.get("body")]
 
-    # Post the review
-    try:
-        review_payload = {
-            "body": overall_comment,
-            "event": github_event,
-            "comments": valid_inline[:20],  # GitHub caps at 20 per review
-        }
-        result = gh.post_review(repo, pr_number, review_payload)
-        print(f"  ✓ Review posted (ID: {result.get('id', 'unknown')})")
-    except Exception as e:
-        print(f"  ✗ Review post failed: {e}")
-        # Fallback: post as regular comment
+    # 3-tier posting: with inline → without inline → plain comment
+    posted = False
+    if valid_inline:
+        try:
+            res = gh.post_review(repo, pr_number, {
+                "body": overall_comment,
+                "event": github_event,
+                "comments": valid_inline[:20],
+            })
+            print(f"  ✓ Review posted with {len(valid_inline)} inline comments (ID: {res.get('id')})")
+            posted = True
+        except Exception as e:
+            print(f"  ✗ Review with inline failed ({e}) — retrying without inline")
+
+    if not posted:
+        try:
+            res = gh.post_review(repo, pr_number, {
+                "body": overall_comment,
+                "event": github_event,
+                "comments": [],
+            })
+            print(f"  ✓ Review posted without inline comments (ID: {res.get('id')})")
+            posted = True
+        except Exception as e:
+            print(f"  ✗ Review API failed ({e}) — falling back to plain comment")
+
+    if not posted:
         try:
             gh.post_pr_comment(repo, pr_number, overall_comment)
-            print(f"  ✓ Fallback comment posted")
-        except Exception as e2:
-            print(f"  ✗ Fallback also failed: {e2}")
+            print(f"  ✓ Plain comment posted as last-resort fallback")
+        except Exception as e:
+            print(f"  ✗ ALL comment methods failed: {e}")
 
     # Add labels
     labels = review.get("labels_to_add", [])
@@ -666,7 +737,8 @@ async def review_pr(
 
     context   = build_pr_context(gh, repo, pr_number, config)
     review    = await run_code_review(context)
-    formatted = await format_review_comment(context, review)
+    # Build comment in Python — no second AI call needed
+    formatted = format_review_comment(context, review)
     result    = post_review_to_github(gh, repo, pr_number, context, review, formatted, config, dry_run)
 
     try:
